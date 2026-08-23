@@ -22,6 +22,13 @@ class TTSBackend(ABC):
     def generate(self, text: str, voice: str, speed: float = 1.0, **kwargs) -> np.ndarray:
         """Synthesize speech. Returns a 1-D float numpy array at self.sample_rate."""
 
+    def generate_stream(self, text: str, voice: str, speed: float = 1.0, **kwargs):
+        """Yield audio chunks as they're produced. Override for streaming backends.
+
+        Default yields the full result of generate() as a single chunk.
+        """
+        yield self.generate(text, voice, speed, **kwargs)
+
     async def async_generate(self, text: str, voice: str, speed: float = 1.0, **kwargs) -> np.ndarray:
         """Async version of generate. Override for backends with async engines.
 

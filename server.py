@@ -1,9 +1,12 @@
 """Multi-model TTS HTTP server."""
 
 import argparse
+import asyncio
 import io
 import logging
 from contextlib import asynccontextmanager
+
+import numpy as np
 
 import soundfile as sf
 import torch
@@ -100,6 +103,53 @@ async def synthesize(req: TTSRequest):
     buf.seek(0)
 
     return StreamingResponse(buf, media_type=mime_type)
+
+
+@app.post("/tts/stream")
+async def synthesize_stream(req: TTSRequest):
+    """Stream raw PCM audio chunks as they're generated.
+
+    Binary protocol: 8-byte header + length-prefixed chunks + zero terminator.
+    Header: sample_rate (u32 LE) | channels (u16 LE) | bit_depth (u16 LE)
+    Each chunk: length (u32 LE) | PCM float32 data (length bytes)
+    Terminator: length = 0 (u32 LE)
+    """
+    import struct
+    from functools import partial
+
+    backend = app.state.backend
+    kwargs = {
+        "exaggeration": req.exaggeration,
+        "language": req.language,
+        "lang_code": req.lang_code,
+        "temperature": req.temperature,
+        "repetition_penalty": req.repetition_penalty,
+    }
+
+    async def pcm_chunk_generator():
+        yield struct.pack("<IHH", backend.sample_rate, 1, 32)
+
+        loop = asyncio.get_event_loop()
+        gen = partial(backend.generate_stream, req.text, req.voice, req.speed, **kwargs)
+        chunks = await loop.run_in_executor(None, lambda: list(gen()))
+
+        for chunk in chunks:
+            if req.speed != 1.0 and not backend.handles_speed:
+                sr = backend.sample_rate
+                new_rate = int(sr * req.speed)
+                audio_tensor = torch.from_numpy(chunk).unsqueeze(0)
+                audio_tensor = ta.functional.resample(audio_tensor, new_rate, sr)
+                chunk = audio_tensor.squeeze(0).numpy()
+
+            pcm_bytes = chunk.astype(np.float32).tobytes()
+            yield struct.pack("<I", len(pcm_bytes)) + pcm_bytes
+
+        yield struct.pack("<I", 0)
+
+    return StreamingResponse(
+        pcm_chunk_generator(),
+        media_type="application/octet-stream",
+    )
 
 
 @app.get("/health")
