@@ -49,7 +49,7 @@ class KokoroBackend(TTSBackend):
             return np.zeros(0, dtype=np.float32)
         return np.concatenate(chunks)
 
-    def generate_stream(self, text: str, voice: str, speed: float = 1.0, **kwargs) -> np.ndarray:
+    def generate_stream(self, text: str, voice: str, speed: float = 1.0, **kwargs):
         if voice == "default":
             voice = "af_heart"
         lang_code = kwargs.get("lang_code", "a")
@@ -59,7 +59,7 @@ class KokoroBackend(TTSBackend):
             self._lang_warn_shown = True
         for _gs, _ps, audio in self._pipeline(text, voice=voice, speed=speed):
             if audio is not None:
-                yield audio
+                yield np.asarray(audio)
 
     def list_voices(self) -> dict[str, str]:
         return {v: v for v in BUILTIN_VOICES}
