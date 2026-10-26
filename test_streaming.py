@@ -4,10 +4,9 @@ import io
 import struct
 import os
 import sys
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import numpy as np
-import pytest
 
 sys.path.insert(0, os.path.dirname(__file__))
 

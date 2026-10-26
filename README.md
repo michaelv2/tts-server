@@ -29,6 +29,13 @@ Each backend gets its own venv to avoid dependency conflicts:
 ## Running
 
 ```bash
+./run.sh kokoro                 # uses .venv-kokoro; no activation needed
+./run.sh qwen3-1.7b --port 9200 # extra args pass through to server.py
+```
+
+Or manually:
+
+```bash
 source .venv-kokoro/bin/activate
 python server.py --model kokoro
 ```

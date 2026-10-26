@@ -4,6 +4,8 @@ import argparse
 import asyncio
 import io
 import logging
+import threading
+from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager
 
 import numpy as np
@@ -25,6 +27,7 @@ MODEL_CHOICES = [
     "qwen3-0.6b", "qwen3-1.7b",
     "qwen3-0.6b-design", "qwen3-1.7b-design",
     "orpheus",
+    "phonon", "phonon-40m",
 ]
 
 # Set by main() before uvicorn starts; read by lifespan().
@@ -65,6 +68,18 @@ FORMATS = {
 }
 
 
+def apply_speed(audio: np.ndarray, sample_rate: int, speed: float) -> np.ndarray:
+    """Speed audio up or down by resampling it as if it had been recorded at sample_rate * speed.
+
+    The rate is rounded to a 1% speed step. A raw int(24000 * 1.15) is 27599, which shares no
+    factor with 24000, so torchaudio builds a ~24000-tap filter and one short reply took ~6 s;
+    27600 reduces to 23:20 and takes about a millisecond.
+    """
+    new_rate = round(sample_rate * round(speed, 2))
+    audio_tensor = torch.from_numpy(np.ascontiguousarray(audio, dtype=np.float32)).unsqueeze(0)
+    return ta.functional.resample(audio_tensor, new_rate, sample_rate).squeeze(0).numpy()
+
+
 @app.post("/tts")
 async def synthesize(req: TTSRequest):
     backend = app.state.backend
@@ -92,17 +107,60 @@ async def synthesize(req: TTSRequest):
 
     # Apply speed adjustment via resampling (skip if backend already handled it)
     if req.speed != 1.0 and not backend.handles_speed:
-        sr = backend.sample_rate
-        new_rate = int(sr * req.speed)
-        audio_tensor = torch.from_numpy(audio).unsqueeze(0)
-        audio_tensor = ta.functional.resample(audio_tensor, new_rate, sr)
-        audio = audio_tensor.squeeze(0).numpy()
+        audio = apply_speed(audio, backend.sample_rate, req.speed)
 
     buf = io.BytesIO()
     sf.write(buf, audio, backend.sample_rate, format=sf_format)
     buf.seek(0)
 
     return StreamingResponse(buf, media_type=mime_type)
+
+
+async def iterate_in_thread(make_iter: Callable[[], Iterator]) -> AsyncIterator:
+    """Run a blocking iterator in a worker thread and yield each item as soon as it is produced.
+
+    Backends synthesize synchronously, so their generators can't run on the event loop. Draining
+    one with list() in an executor (the old approach) held every chunk until synthesis finished,
+    which defeated streaming. If the consumer stops early (client disconnect), the worker stops
+    at the next chunk and closes the backend's iterator so it can release its resources.
+    """
+    loop = asyncio.get_running_loop()
+    queue: asyncio.Queue = asyncio.Queue()
+    stop = threading.Event()
+
+    def send(kind: str, payload=None) -> None:
+        try:
+            loop.call_soon_threadsafe(queue.put_nowait, (kind, payload))
+        except RuntimeError:  # event loop already closed (server shutting down)
+            stop.set()
+
+    def produce() -> None:
+        it = make_iter()
+        try:
+            for item in it:
+                if stop.is_set():
+                    break
+                send("item", item)
+        except Exception as e:  # surfaced to the consumer, which re-raises it
+            send("error", e)
+        finally:
+            close = getattr(it, "close", None)
+            if close is not None:
+                close()
+            send("done")
+
+    loop.run_in_executor(None, produce)
+    try:
+        while True:
+            kind, payload = await queue.get()
+            if kind == "item":
+                yield payload
+            elif kind == "error":
+                raise payload
+            else:
+                return
+    finally:
+        stop.set()
 
 
 @app.post("/tts/stream")
@@ -129,17 +187,10 @@ async def synthesize_stream(req: TTSRequest):
     async def pcm_chunk_generator():
         yield struct.pack("<IHH", backend.sample_rate, 1, 32)
 
-        loop = asyncio.get_event_loop()
         gen = partial(backend.generate_stream, req.text, req.voice, req.speed, **kwargs)
-        chunks = await loop.run_in_executor(None, lambda: list(gen()))
-
-        for chunk in chunks:
+        async for chunk in iterate_in_thread(gen):
             if req.speed != 1.0 and not backend.handles_speed:
-                sr = backend.sample_rate
-                new_rate = int(sr * req.speed)
-                audio_tensor = torch.from_numpy(chunk).unsqueeze(0)
-                audio_tensor = ta.functional.resample(audio_tensor, new_rate, sr)
-                chunk = audio_tensor.squeeze(0).numpy()
+                chunk = apply_speed(chunk, backend.sample_rate, req.speed)
 
             pcm_bytes = chunk.astype(np.float32).tobytes()
             yield struct.pack("<I", len(pcm_bytes)) + pcm_bytes

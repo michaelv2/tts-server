@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BACKENDS=("chatterbox" "kokoro" "qwen3" "orpheus")
+BACKENDS=("chatterbox" "kokoro" "qwen3" "orpheus" "phonon")
 
 usage() {
     echo "Usage: $0 <backend>"
@@ -36,7 +36,14 @@ python3 -m venv "$VENV_DIR"
 
 echo "==> Installing dependencies for: $BACKEND"
 "$VENV_DIR/bin/pip" install --upgrade pip -q
-"$VENV_DIR/bin/pip" install -e ".[$BACKEND]"
+CONSTRAINTS="constraints-${BACKEND}.txt"
+if [[ -f "$CONSTRAINTS" ]]; then
+    # Pinned, audited versions: keeps brand-new upstream releases out of a fresh venv.
+    echo "==> Using pinned versions from $CONSTRAINTS"
+    "$VENV_DIR/bin/pip" install -c "$CONSTRAINTS" -e ".[$BACKEND]"
+else
+    "$VENV_DIR/bin/pip" install -e ".[$BACKEND]"
+fi
 
 echo ""
 echo "Done. To use:"
