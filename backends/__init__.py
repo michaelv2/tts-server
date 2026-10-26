@@ -66,9 +66,12 @@ def get_backend(model_name: str) -> TTSBackend:
     elif model_name == "orpheus":
         from backends.orpheus import OrpheusBackend
         return OrpheusBackend()
+    elif model_name in ("phonon", "phonon-40m"):
+        from backends.phonon import PhononBackend
+        return PhononBackend(model_name)
     else:
         raise ValueError(
             f"Unknown model: {model_name!r}. "
             f"Choose from: chatterbox, kokoro, qwen3-0.6b, qwen3-1.7b, "
-            f"qwen3-0.6b-design, qwen3-1.7b-design, orpheus"
+            f"qwen3-0.6b-design, qwen3-1.7b-design, orpheus, phonon, phonon-40m"
         )

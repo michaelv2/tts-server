@@ -1,7 +1,7 @@
 [project]
 name = "kokoro-tts-server"
 version = "0.3.0"
-description = "Multi-model TTS HTTP server — Chatterbox, Kokoro, Qwen3, Orpheus"
+description = "Multi-model TTS HTTP server — Chatterbox, Kokoro, Qwen3, Orpheus, Phonon"
 requires-python = ">=3.11"
 dependencies = [
     "soundfile",
@@ -17,11 +17,13 @@ chatterbox = ["chatterbox-tts>=0.1.7"]
 kokoro = ["kokoro>=0.9.4"]
 qwen3 = ["qwen-tts"]
 orpheus = ["orpheus-speech"]
+phonon = ["ptts==0.4.1"]  # pinned: version passed the dependency audit
 all = [
     "chatterbox-tts>=0.1.7",
     "kokoro>=0.9.4",
     "qwen-tts",
     "orpheus-speech",
+    "ptts==0.4.1",
 ]
 
 [tool.setuptools]

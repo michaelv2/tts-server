@@ -4,17 +4,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-A multi-model TTS HTTP server behind a FastAPI API. Supports five backends selectable at startup: Chatterbox Turbo, Kokoro-82M, Qwen3-TTS (0.6B & 1.7B), and Orpheus TTS.
+A multi-model TTS HTTP server behind a FastAPI API. Supports six backends selectable at startup: Chatterbox Turbo, Kokoro-82M, Qwen3-TTS (0.6B & 1.7B), Orpheus TTS, and Gradium Phonon (31M & 40M).
 
 ## Development Setup
 
 ```bash
 # Python 3.11 via pyenv; venv already exists
 source .venv/bin/activate
-pip install -e ".[chatterbox]"   # or .[kokoro], .[qwen3], .[orpheus], .[all]
+pip install -e ".[chatterbox]"   # or .[kokoro], .[qwen3], .[orpheus], .[phonon], .[all]
 ```
 
-Requires a **CUDA GPU** — all backends load onto GPU at startup with no CPU fallback.
+Requires a **CUDA GPU** for every backend except Phonon, which runs on CPU through the `ptts` Rust runtime (no PyTorch needed by the model itself).
 
 Kokoro additionally requires system package `espeak-ng` (`apt-get install espeak-ng`).
 
@@ -26,6 +26,8 @@ python server.py --model kokoro
 python server.py --model qwen3-0.6b
 python server.py --model qwen3-1.7b
 python server.py --model orpheus
+python server.py --model phonon        # Phonon 31M English (Apache 2.0)
+python server.py --model phonon-40m    # CC BY-NC 4.0; accept the gated repo's terms on Hugging Face first
 
 # Also available as entry point
 tts-server --model kokoro
@@ -59,6 +61,7 @@ Model-specific request fields (ignored by backends that don't use them):
 - `backends/kokoro.py` — wraps `kokoro` (KPipeline). Built-in voices; default `af_heart`. Handles speed natively (`handles_speed = True`), so server skips resampling.
 - `backends/qwen3.py` — wraps `qwen-tts` (Qwen3TTSModel). Parameterized by size. Voice cloning from `voices/qwen3/<name>/reference.wav` + `transcript.txt`.
 - `backends/orpheus.py` — wraps `orpheus-speech` (OrpheusModel). Built-in voices; default `tara`. Collects streaming PCM int16 chunks into numpy.
+- `backends/phonon.py` — wraps `ptts` (pinned to 0.4.1, the audited version). CPU only. Voices: the checkpoint's own (`default`) plus Gradium's catalog, by name or catalog ID, downloaded on first use. No speed control, so the server resamples. One model instance serves all requests behind a lock. Env: `PHONON_MODEL`, `PHONON_LANG`, `PHONON_REWRITES`, `PHONON_THREADS` (default 6), `PHONON_QUANT` (default `q8_0`). The thread and quant defaults matter a lot: ptts's own defaults (all CPU threads, f32) were ~10x slower to first audio on a 16-core Ryzen.
 
 ### Server (`server.py`)
 
@@ -77,6 +80,6 @@ voices/
 
 ## Notes
 
-- **No tests exist.** There is no test suite or test infrastructure.
+- **Tests:** `test_streaming.py` (stream protocol) and `test_phonon_backend.py` (Phonon backend, ptts mocked). Run with `pytest`.
 - **No Dockerfile.** Deployment is run-from-source.
 - Dependencies are optional groups in `pyproject.toml` — only install what you need.
