@@ -15,7 +15,7 @@ import torch
 import torchaudio as ta
 import uvicorn
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from backends import get_backend
@@ -111,9 +111,10 @@ async def synthesize(req: TTSRequest):
 
     buf = io.BytesIO()
     sf.write(buf, audio, backend.sample_rate, format=sf_format)
-    buf.seek(0)
 
-    return StreamingResponse(buf, media_type=mime_type)
+    # One complete body. StreamingResponse(buf) iterated the BytesIO line by line, which for
+    # binary audio meant splitting at every 0x0A byte and sending thousands of tiny chunks.
+    return Response(content=buf.getvalue(), media_type=mime_type)
 
 
 async def iterate_in_thread(make_iter: Callable[[], Iterator]) -> AsyncIterator:

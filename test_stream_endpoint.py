@@ -139,3 +139,22 @@ def test_apply_speed_is_fast_and_shortens_audio():
     out = server.apply_speed(audio, 24000, 1.15)
     assert time.monotonic() - start < 1.0
     assert abs(len(out) - 24000 / 1.15) < 2
+
+
+class ConstantBackend:
+    name = "constant"
+    sample_rate = 24000
+    handles_speed = True
+
+    async def async_generate(self, text, voice, speed=1.0, **kwargs):
+        return np.full(24000, 0.1, dtype=np.float32)
+
+
+def test_tts_returns_one_complete_wav_body(client):
+    server.app.state.backend = ConstantBackend()
+    resp = client.post("/tts", json={"text": "hi"})
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "audio/wav"
+    # A sized response, not a chunked stream of BytesIO "lines".
+    assert int(resp.headers["content-length"]) == len(resp.content)
+    assert resp.content[:4] == b"RIFF"
